@@ -4,11 +4,12 @@ const {
   PluginSettingTab,
   Setting,
   normalizePath,
-  requestUrl,
 } = require("obsidian");
+const http = require("http");
+const https = require("https");
 
 const DEFAULT_SETTINGS = {
-  zoteroBaseUrl: "http://localhost:23119/api",
+  zoteroBaseUrl: "http://127.0.0.1:23119/api",
   zoteroLibrary: "users/0",
   templatePath: "Templates/Paper Template.md",
   notesFolder: "",
@@ -148,20 +149,23 @@ module.exports = class ZoteroPaperNotesPlugin extends Plugin {
     const url =
       `${baseUrl}/${library}/items/top` +
       `?sort=dateAdded&direction=desc&limit=${encodeURIComponent(limit)}` +
-      "&format=json&include=data";
+      "&format=json&include=data&v=3";
 
     let response;
     try {
-      response = await requestUrl({
-        url,
-        method: "GET",
-        headers: {
-          "Zotero-API-Version": "3",
-        },
-      });
+      response = await requestLocalJson(url);
     } catch (error) {
-      const message = error && error.message ? error.message : String(error);
-      throw new Error(`Zotero Local API is unavailable. ${message}`);
+      if (baseUrl.includes("localhost")) {
+        try {
+          response = await requestLocalJson(url.replace("localhost", "127.0.0.1"));
+        } catch (fallbackError) {
+          const message = fallbackError && fallbackError.message ? fallbackError.message : String(fallbackError);
+          throw new Error(`Zotero Local API is unavailable. ${message}`);
+        }
+      } else {
+        const message = error && error.message ? error.message : String(error);
+        throw new Error(`Zotero Local API is unavailable. ${message}`);
+      }
     }
 
     if (response.status === 403) {
@@ -664,4 +668,65 @@ function trimTrailingSlash(value) {
 
 function trimSlashes(value) {
   return String(value || "").replace(/^\/+|\/+$/g, "");
+}
+
+function requestLocalJson(url) {
+  return new Promise((resolve, reject) => {
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(url);
+    } catch (error) {
+      reject(new Error(`Invalid Zotero Local API URL: ${url}`));
+      return;
+    }
+
+    const client = parsedUrl.protocol === "https:" ? https : http;
+    const request = client.request(
+      parsedUrl,
+      {
+        method: "GET",
+        timeout: 5000,
+        headers: {
+          Accept: "application/json",
+          "Zotero-API-Version": "3",
+          "User-Agent": "Obsidian Zotero Paper Notes",
+        },
+      },
+      (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          body += chunk;
+        });
+        response.on("end", () => {
+          let json = null;
+          if (body.trim()) {
+            try {
+              json = JSON.parse(body);
+            } catch (error) {
+              reject(
+                new Error(
+                  `Zotero Local API returned non-JSON response (${response.statusCode}): ${body.slice(0, 120)}`,
+                ),
+              );
+              return;
+            }
+          }
+
+          resolve({
+            status: response.statusCode || 0,
+            headers: response.headers || {},
+            text: body,
+            json,
+          });
+        });
+      },
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error("Zotero Local API request timed out."));
+    });
+    request.on("error", reject);
+    request.end();
+  });
 }
