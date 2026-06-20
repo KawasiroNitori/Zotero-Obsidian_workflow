@@ -4,7 +4,7 @@ This Obsidian desktop plugin polls the Zotero Local API and creates a note for e
 
 Defaults:
 
-- Zotero API: `http://localhost:23119/api`
+- Zotero API: `http://127.0.0.1:23119/api`
 - Zotero library: `users/0`
 - Template: `Templates/Paper Template.md`
 - Note folder: vault root

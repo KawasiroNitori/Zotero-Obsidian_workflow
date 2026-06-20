@@ -418,7 +418,7 @@ class ZoteroPaperNotesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Zotero Local API base URL")
-      .setDesc("Default: http://localhost:23119/api")
+      .setDesc("Default: http://127.0.0.1:23119/api")
       .addText((text) =>
         text
           .setPlaceholder(DEFAULT_SETTINGS.zoteroBaseUrl)
