@@ -1,0 +1,9 @@
+{
+  "id": "zotero-paper-notes",
+  "name": "Zotero Paper Notes",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Create paper notes from newly added Zotero items using a vault template.",
+  "author": "Codex",
+  "isDesktopOnly": true
+}
