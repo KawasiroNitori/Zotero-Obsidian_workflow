@@ -99,19 +99,28 @@ module.exports = class ZoteroPaperNotesPlugin extends Plugin {
         .reverse();
 
       let createdCount = 0;
+      let skippedCount = 0;
       for (const item of candidates) {
-        const result = await this.createOrOpenNoteForItem(item, {
-          openNote: this.settings.autoOpenNewTab,
-        });
-        if (result.created) {
-          createdCount += 1;
+        try {
+          const result = await this.createOrOpenNoteForItem(item, {
+            openNote: this.settings.autoOpenNewTab,
+          });
+          if (result.created) {
+            createdCount += 1;
+          }
+        } catch (error) {
+          if (await this.handleItemProcessingError(item, error, Boolean(options.manual))) {
+            skippedCount += 1;
+          } else {
+            throw error;
+          }
         }
       }
 
       if (options.manual) {
         new Notice(
-          createdCount > 0
-            ? `Created ${createdCount} Zotero paper note(s).`
+          createdCount > 0 || skippedCount > 0
+            ? `Created ${createdCount} Zotero paper note(s); skipped ${skippedCount}.`
             : "No new Zotero papers found.",
         );
       }
@@ -197,6 +206,19 @@ module.exports = class ZoteroPaperNotesPlugin extends Plugin {
     }
   }
 
+  async handleItemProcessingError(item, error, manual) {
+    if (!isFileAlreadyExistsError(error)) {
+      return false;
+    }
+
+    await this.markItemProcessed(item.key);
+    if (manual) {
+      const title = item && item.data && item.data.title ? item.data.title : item.key;
+      new Notice(`Skipped Zotero item after repeated filename collisions: ${title}`, 9000);
+    }
+    return true;
+  }
+
   isPaperItem(item) {
     if (!item || !item.key || !item.data) {
       return false;
@@ -238,8 +260,7 @@ module.exports = class ZoteroPaperNotesPlugin extends Plugin {
 
     const template = await this.readTemplate();
     const noteContent = this.renderNote(template, metadata);
-    const path = await this.nextAvailablePath(metadata.title);
-    const file = await this.app.vault.create(path, noteContent);
+    const file = await this.createNoteWithUniquePath(metadata.title, noteContent);
 
     await this.markItemProcessed(item.key);
     if (options.openNote) {
@@ -316,19 +337,44 @@ module.exports = class ZoteroPaperNotesPlugin extends Plugin {
   async nextAvailablePath(title) {
     await this.ensureNotesFolder();
 
-    const folder = normalizePath(this.settings.notesFolder || "");
-    const baseName = sanitizeFileName(title) || "Untitled";
-    const prefix = folder ? `${folder}/` : "";
-
     let index = 0;
     while (true) {
-      const suffix = index === 0 ? "" : ` ${index}`;
-      const path = `${prefix}${baseName}${suffix}.md`;
+      const path = this.pathForTitleIndex(title, index);
       if (!this.app.vault.getAbstractFileByPath(path)) {
         return path;
       }
       index += 1;
     }
+  }
+
+  async createNoteWithUniquePath(title, noteContent) {
+    await this.ensureNotesFolder();
+
+    for (let index = 0; index < 1000; index += 1) {
+      const path = this.pathForTitleIndex(title, index);
+      if (this.app.vault.getAbstractFileByPath(path)) {
+        continue;
+      }
+
+      try {
+        return await this.app.vault.create(path, noteContent);
+      } catch (error) {
+        if (isFileAlreadyExistsError(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw new Error(`File already exists after trying 1000 filename variants for: ${title}`);
+  }
+
+  pathForTitleIndex(title, index) {
+    const folder = normalizePath(this.settings.notesFolder || "");
+    const baseName = sanitizeFileName(title) || "Untitled";
+    const prefix = folder ? `${folder}/` : "";
+    const suffix = index === 0 ? "" : ` ${index}`;
+    return `${prefix}${baseName}${suffix}.md`;
   }
 
   async ensureNotesFolder() {
@@ -668,6 +714,15 @@ function trimTrailingSlash(value) {
 
 function trimSlashes(value) {
   return String(value || "").replace(/^\/+|\/+$/g, "");
+}
+
+function isFileAlreadyExistsError(error) {
+  const message = (error && error.message ? error.message : String(error)).toLowerCase();
+  return (
+    message.includes("already exists") ||
+    message.includes("file exists") ||
+    message.includes("eexist")
+  );
 }
 
 function requestLocalJson(url) {
